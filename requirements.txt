@@ -1,0 +1,17 @@
+# Self Agent Framework - Python 依赖
+
+# 核心依赖
+pyyaml>=6.0
+
+# LLM Provider 依赖
+openai>=1.0.0           # OpenAI 兼容 API (OpenAI, Azure, 本地代理等)
+anthropic>=0.18.0       # Anthropic Claude API
+
+# 可选: 本地模型支持
+# ollama>=0.1.0         # Ollama 本地模型
+
+# 工具依赖
+duckduckgo-search>=3.0   # 网页搜索
+
+# 异步支持
+aiohttp>=3.9.0          # 异步 HTTP (如果需要)
