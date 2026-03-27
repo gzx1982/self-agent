@@ -1,0 +1,72 @@
+# Self Agent Framework - 配置文件示例
+# 复制此文件为 config/agent.yaml 并修改配置
+
+# ==================== Agent 基本配置 ====================
+agent:
+  name: "my-agent"                    # Agent 名称
+  model: "ollama/qwen3.5:35b"              # 默认模型
+  max_tokens: 4096                   # 最大输出 tokens
+  temperature: 0.7                    # 生成温度 (0.0-2.0)
+  timeout: 60                         # 请求超时(秒)
+  max_tool_iterations: 10            # 最大工具调用迭代次数
+  # system_prompt: |                  # 自定义系统提示词(可选)
+  #   你是一个专业的AI助手...
+
+# ==================== Provider 配置 ====================
+providers:
+  # OpenAI 兼容 Provider (OpenAI, Azure, 本地代理等)
+  openai:
+    api_key: "${OPENAI_API_KEY}"     # 使用环境变量
+    # api_key: "sk-your-key"           # 或直接配置
+    base_url: "https://api.openai.com/v1"
+    model: "gpt-4"
+  
+  # Anthropic Provider (Claude 系列)
+  anthropic:
+    api_key: "${ANTHROPIC_API_KEY}"
+    model: "claude-3-opus-20240229"
+  
+  # MiniMax Provider
+  minimax:
+    api_key: "${MINIMAX_API_KEY}"
+    base_url: "https://api.minimax.chat/v1"
+    model: "MiniMax-Text-01"
+  
+  # Ollama 本地 Provider (无需 API Key)
+  ollama:
+    base_url: "http://localhost:11434"
+    model: "qwen3.5:35b"
+
+# ==================== 工具配置 ====================
+tools:
+  enabled:
+    - "web_search"      # 网页搜索
+    - "file_read"       # 文件读取
+    - "file_write"      # 文件写入
+    - "exec"            # 命令执行
+    - "calculator"      # 计算器
+  
+  web_search:
+    engine: "duckduckgo"   # 搜索引擎: duckduckgo, google, bing
+  
+  exec:
+    allowed_commands:        # 命令白名单
+      - "ls"
+      - "cat"
+      - "grep"
+      - "echo"
+      - "pwd"
+      - "cd"
+      - "find"
+      - "curl"
+      - "wget"
+      - "git"
+    max_output_size: 10240     # 最大输出字节
+
+# ==================== 记忆配置 ====================
+memory:
+  enabled: true
+  type: "file"               # 存储类型: "file" 或 "sqlite"
+  path: "./memory_db"        # 存储路径
+  max_items: 1000            # 最大记忆条数
+  context_window: 10          # 发送给 LLM 的历史消息数

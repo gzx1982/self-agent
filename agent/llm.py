@@ -355,7 +355,17 @@ class OllamaProvider(LLMProvider):
         response.raise_for_status()
         response_dict = response.json()
 
-        content = response_dict['message']['content']
+        content = response_dict['message'].get('content', '')
+
+        # 处理 Qwen3.5 等模型的 thinking 字段
+        # 有些模型会把思考过程放在 thinking 字段而不是 content
+        if not content and 'thinking' in response_dict['message']:
+            thinking = response_dict['message'].get('thinking', '')
+            if thinking:
+                # 将 thinking 的内容作为最终响应
+                # 移除思考过程标签，用 clean 的方式返回
+                # thinking 中通常包含实际的回复内容
+                content = thinking.split('\n\n')[-1] if '\n\n' in thinking else thinking
 
         # 尝试从文本中解析工具调用
         tool_calls = self._parse_tool_calls(content)
