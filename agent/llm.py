@@ -10,10 +10,12 @@ Self Agent Framework - LLM Provider 实现
 
 import os
 import json
+import re
 import logging
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional, Union
 from dataclasses import dataclass
+import uuid
 
 from .types import Message, ToolCall, ToolDefinition, LLMResponse
 from .config import Config
@@ -259,6 +261,77 @@ class OllamaProvider(LLMProvider):
         self.default_model = self.config.get('providers.ollama.model', 'llama3')
         self.session = requests.Session()
 
+    def _find_matching_brace(self, text: str, start: int) -> int:
+        """找到匹配的结束括号位置，处理嵌套"""
+        count = 0
+        i = start
+        while i < len(text):
+            if text[i] == '{':
+                count += 1
+            elif text[i] == '}':
+                count -= 1
+                if count == 0:
+                    return i
+            i += 1
+        return -1
+
+    def _parse_tool_calls(self, text: str) -> Optional[List[ToolCall]]:
+        """从文本内容中解析工具调用"""
+        tool_calls = []
+
+        # 尝试标准 JSON 解析
+        try:
+            data = json.loads(text)
+            if isinstance(data, dict) and 'name' in data and 'arguments' in data:
+                return [ToolCall(
+                    id=str(uuid.uuid4()),
+                    name=data['name'],
+                    arguments=data['arguments'] if isinstance(data['arguments'], dict) else {},
+                )]
+        except json.JSONDecodeError:
+            pass
+
+        # 回退到正则提取
+        pattern = r'\{\s*"name"\s*:\s*"([^"]+)"\s*,\s*"arguments"\s*:\s*\{'
+        matches = list(re.finditer(pattern, text))
+
+        for match in matches:
+            name = match.group(1)
+            args_start = match.end() - 1
+            args_end = self._find_matching_brace(text, args_start)
+            if args_end == -1:
+                continue
+
+            args_text = text[args_start:args_end + 1]
+
+            # 尝试解析 arguments JSON
+            try:
+                arguments = json.loads(args_text)
+            except json.JSONDecodeError:
+                # JSON 解析失败，尝试提取关键字段
+                arguments = {}
+                # 用正则提取 path
+                path_match = re.search(r'"path"\s*:\s*"([^"]*)"', args_text)
+                if path_match:
+                    arguments['path'] = path_match.group(1)
+                # 用更宽松的正则提取 content - 匹配到最后一个 } 之前的引号
+                content_match = re.search(r'"content"\s*:\s*"(.*)"\s*\}', args_text, re.DOTALL)
+                if content_match:
+                    arguments['content'] = content_match.group(1)
+
+            if arguments:
+                try:
+                    tool_call = ToolCall(
+                        id=str(uuid.uuid4()),
+                        name=name,
+                        arguments=arguments,
+                    )
+                    tool_calls.append(tool_call)
+                except (ValueError, TypeError):
+                    continue
+
+        return tool_calls if tool_calls else None
+
     def chat(self, messages: List[Dict], **kwargs) -> LLMResponse:
         """发送聊天请求"""
         model = kwargs.get('model', self.default_model)
@@ -266,14 +339,14 @@ class OllamaProvider(LLMProvider):
         if '/' in model:
             model = model.split('/')[1]
         temperature = kwargs.get('temperature', self.config.get('agent.temperature', 0.7))
-        
+
         payload = {
             'model': model,
             'messages': messages,
             'temperature': temperature,
             'stream': False,
         }
-        
+
         response = self.session.post(
             f"{self.base_url}/api/chat",
             json=payload,
@@ -281,9 +354,24 @@ class OllamaProvider(LLMProvider):
         )
         response.raise_for_status()
         response_dict = response.json()
-        
+
+        content = response_dict['message']['content']
+
+        # 尝试从文本中解析工具调用
+        tool_calls = self._parse_tool_calls(content)
+
+        # 如果解析到工具调用，清除 content 中的工具调用部分
+        if tool_calls:
+            # 使用更通用的模式移除 tool call JSON 块
+            for tc in tool_calls:
+                # 移除包含该工具调用的 JSON 对象
+                pattern = r'\{[^{}]*"name"\s*:\s*"' + re.escape(tc.name) + r'"[^{}]*"arguments"[^{}]*\}'
+                content = re.sub(pattern, '', content)
+            content = content.strip()
+
         return LLMResponse(
-            content=response_dict['message']['content'],
+            content=content,
+            tool_calls=tool_calls,
             raw_response=response_dict,
         )
     
