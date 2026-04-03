@@ -10,13 +10,19 @@ Self Agent Framework - A configuration-based AI agent framework supporting multi
 
 ```bash
 # Install dependencies
-pip install pyyaml openai anthropic requests duckduckgo-search
+pip install -r requirements.txt
 
 # Run a single task
 python main.py --config config/agent.yaml --model "openai/gpt-4" --task "your task"
 
 # Interactive mode
 python main.py --interactive
+
+# Web UI mode
+python main.py --web
+
+# Web UI with custom port
+python main.py --web --port 8080
 
 # With verbose logging
 python main.py --config config/agent.yaml --verbose
@@ -79,7 +85,15 @@ Key sections:
 `main.py` provides CLI with modes:
 - Task mode: `--task "..."`
 - Interactive mode: `--interactive`
+- Web UI mode: `--web` (starts FastAPI server on port 8000)
 - Default: shows help
+
+### Web Interface
+
+The web interface is provided by `web/app.py` (FastAPI) with a frontend at `web/static/index.html`:
+- REST API at `/chat`, `/history`, `/reset`, `/status`
+- Browser UI at `/`
+- Supports streaming responses and conversation history
 
 ### Execution Flow
 

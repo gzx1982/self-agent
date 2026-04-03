@@ -20,6 +20,23 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from agent import AgentLoop, Config, load_config
 
 
+def run_web_server(port: int = 8000):
+    """启动 Web 服务"""
+    try:
+        import uvicorn
+        from web.app import app
+    except ImportError:
+        print("Error: Web 服务需要安装 uvicorn")
+        print("请运行: pip install uvicorn")
+        sys.exit(1)
+
+    print(f"=== Self Agent Web Server ===")
+    print(f"Starting server on http://0.0.0.0:{port}")
+    print(f"Open http://localhost:{port} in your browser")
+    print()
+    uvicorn.run(app, host="0.0.0.0", port=port)
+
+
 def setup_logging(verbose: bool = False):
     """设置日志"""
     level = logging.DEBUG if verbose else logging.INFO
@@ -147,22 +164,40 @@ Environment variables:
         action='store_true',
         help='详细输出'
     )
-    
+
+    parser.add_argument(
+        '--web', '-w',
+        action='store_true',
+        help='启动 Web 界面'
+    )
+
+    parser.add_argument(
+        '--port', '-p',
+        type=int,
+        default=8000,
+        help='Web 服务端口 (默认: 8000)'
+    )
+
     args = parser.parse_args()
-    
+
+    # Web 模式独立运行
+    if args.web:
+        run_web_server(args.port)
+        return
+
     # 设置日志
     setup_logging(args.verbose)
-    
+
     # 加载配置
     try:
         config = load_config(args.config)
     except FileNotFoundError as e:
         print(f"Error: {e}")
         sys.exit(1)
-    
+
     # 创建 Agent
     agent = AgentLoop(config, model=args.model)
-    
+
     # 根据模式运行
     if args.interactive:
         interactive_mode(agent)

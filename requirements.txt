@@ -15,3 +15,7 @@ duckduckgo-search>=3.0   # 网页搜索
 
 # 异步支持
 aiohttp>=3.9.0          # 异步 HTTP (如果需要)
+
+# Web 界面依赖
+fastapi>=0.100.0        # Web 框架
+uvicorn[standard]>=0.23.0  # ASGI 服务器
