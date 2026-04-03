@@ -4,7 +4,8 @@
 # ==================== Agent 基本配置 ====================
 agent:
   name: "my-agent"                    # Agent 名称
-  model: "ollama/qwen3.5:35b"              # 默认模型
+  #model: "openai/claude-opus-4.6"              # 默认模型
+  model: "ollama/qwen3.5:35b"
   max_tokens: 4096                   # 最大输出 tokens
   temperature: 0.7                    # 生成温度 (0.0-2.0)
   timeout: 60                         # 请求超时(秒)
@@ -16,10 +17,11 @@ agent:
 providers:
   # OpenAI 兼容 Provider (OpenAI, Azure, 本地代理等)
   openai:
-    api_key: "${OPENAI_API_KEY}"     # 使用环境变量
+    api_key: "sk-Xi0MIGBB4kJyA0NiPUHa-A"     # 使用环境变量
     # api_key: "sk-your-key"           # 或直接配置
-    base_url: "https://api.openai.com/v1"
-    model: "gpt-4"
+    #base_url: "https://api.openai.com/v1"
+    base_url: "https://hualai-claw.hualaikeji.com/v1"
+    model: "claude-opus-4.6"
   
   # Anthropic Provider (Claude 系列)
   anthropic:
@@ -61,6 +63,8 @@ tools:
       - "curl"
       - "wget"
       - "git"
+      - "mkdir"
+      - "touch"
     max_output_size: 10240     # 最大输出字节
 
 # ==================== 记忆配置 ====================

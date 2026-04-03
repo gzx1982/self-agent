@@ -31,12 +31,12 @@ def setup_logging(verbose: bool = False):
 
 def interactive_mode(agent: AgentLoop):
     """交互模式"""
-    print(f"=== Self Agent Interactive Mode ===", flush=True)
-    print(f"Agent: {agent.agent_config['name']}", flush=True)
-    print(f"Model: {agent.model}", flush=True)
-    print(f"Tools: {', '.join(agent.tools.get_names()) or 'None'}", flush=True)
-    print(f"Type 'exit' or 'quit' to exit, 'reset' to clear history", flush=True)
-    print(flush=True)
+    print(f"=== Self Agent Interactive Mode ===")
+    print(f"Agent: {agent.agent_config['name']}")
+    print(f"Model: {agent.model}")
+    print(f"Tools: {', '.join(agent.tools.get_names()) or 'None'}")
+    print(f"Type 'exit' or 'quit' to exit, 'reset' to clear history")
+    print()
     
     while True:
         try:
@@ -83,14 +83,18 @@ Commands:
 
 def task_mode(agent: AgentLoop, task: str):
     """单任务模式"""
-    print(f"Task: {task}", flush=True)
-    print("-" * 50, flush=True)
+    print(f"Task: {task}")
+    print("-" * 50)
 
     try:
         response = agent.run(task)
-        print(response, flush=True)
+        print("\n" + "=" * 50)
+        print("Agent Response:")
+        print(response)
     except Exception as e:
-        print(f"Error: {e}", flush=True)
+        import traceback
+        print(f"Error: {e}")
+        traceback.print_exc()
         sys.exit(1)
 
 

@@ -59,21 +59,21 @@ class LLMProvider(ABC):
 
 class OpenAIProvider(LLMProvider):
     """OpenAI 兼容 Provider（支持 OpenAI、Azure、本地代理等）"""
-    
+
     def __init__(self, config: Config):
         super().__init__(config)
         try:
             from openai import OpenAI
         except ImportError:
             raise ImportError("openai package not installed. Run: pip install openai")
-        
+
         api_key = self.config.resolve_env_vars(
             self.config.get('providers.openai.api_key', '')
         )
         base_url = self.config.resolve_env_vars(
             self.config.get('providers.openai.base_url', 'https://api.openai.com/v1')
         )
-        
+
         self.client = OpenAI(
             api_key=api_key,
             base_url=base_url,
@@ -81,56 +81,90 @@ class OpenAIProvider(LLMProvider):
         )
         self.default_model = self.config.get('providers.openai.model', 'gpt-4')
         self.tools = self._load_tools()
-    
+        logger.info(f"[OpenAIProvider] Initialized with base_url={base_url}, model={self.default_model}, tools={'loaded' if self.tools else 'none'}")
+
     def _load_tools(self) -> Optional[List[Dict]]:
         """加载工具定义"""
+        # 首先尝试从 providers.openai.tools 加载（自定义格式）
         tools_config = self.config.get('providers.openai.tools')
         if tools_config:
+            logger.info(f"[OpenAIProvider] Loaded tools from providers.openai.tools: {len(tools_config)} tools")
             return tools_config
+
+        # 回退：从 tools.enabled 构建（兼容旧配置）
+        enabled_tools = self.config.get('tools.enabled', [])
+        if enabled_tools:
+            logger.info(f"[OpenAIProvider] Building tools from tools.enabled: {enabled_tools}")
+            # 这里返回 None，因为我们不直接在 provider 层构建 tools
+            # Tools 应该通过 AgentLoop 传入
         return None
-    
+
     def chat(self, messages: List[Dict], **kwargs) -> LLMResponse:
         """发送聊天请求"""
         model = kwargs.get('model', self.default_model)
+        # 去掉 provider 前缀 (e.g. "openai/claude-opus-4.6" -> "claude-opus-4.6")
+        if '/' in model:
+            model = model.split('/')[1]
         temperature = kwargs.get('temperature', self.config.get('agent.temperature', 0.7))
         max_tokens = kwargs.get('max_tokens', self.config.get('agent.max_tokens', 4096))
-        
+        tools = kwargs.get('tools')  # 从 kwargs 获取 tools（由 AgentLoop 传入）
+
         request_kwargs = {
             'model': model,
             'messages': messages,
             'temperature': temperature,
             'max_tokens': max_tokens,
         }
-        
+
         # 添加工具调用支持
-        if self.tools:
-            request_kwargs['tools'] = self.tools
-        
+        if tools:
+            logger.info(f"[OpenAIProvider] Sending {len(tools)} tools to API")
+            request_kwargs['tools'] = tools
+        else:
+            logger.debug("[OpenAIProvider] No tools provided for this request")
+
+        logger.info(f"[OpenAIProvider] Request: model={model}, messages_count={len(messages)}")
+
         response = self.client.chat.completions.create(**request_kwargs)
         response_dict = response.model_dump()
-        
+
         choice = response_dict['choices'][0]
         message = choice['message']
-        
+
+        # 调试：打印完整响应
+        finish_reason = choice.get('finish_reason', '')
+        logger.info(f"[OpenAIProvider] Response: finish_reason={finish_reason}")
+
         tool_calls = None
         if 'tool_calls' in message and message['tool_calls']:
             tool_calls = [ToolCall.from_dict(tc) for tc in message['tool_calls']]
-        
+            logger.info(f"[OpenAIProvider] Detected {len(tool_calls)} tool calls in response")
+            for tc in tool_calls:
+                logger.info(f"  - Tool: {tc.name}, args={tc.arguments}")
+        else:
+            content_preview = message.get('content', '')[:200] if message.get('content') else ''
+            logger.info(f"[OpenAIProvider] No tool calls in response. Content preview: {content_preview}")
+
         return LLMResponse(
             content=message.get('content', ''),
             tool_calls=tool_calls,
             raw_response=response_dict,
             usage=response_dict.get('usage'),
         )
-    
+
     def complete(self, prompt: str, **kwargs) -> str:
         """补全请求"""
         messages = [{"role": "user", "content": prompt}]
         return self.chat(messages, **kwargs).content
-    
+
     def supports_tools(self) -> bool:
         """是否支持工具调用"""
         return self.tools is not None
+
+    def set_tools(self, tools: List[Dict]):
+        """设置工具定义（由 AgentLoop 调用）"""
+        self.tools = tools
+        logger.info(f"[OpenAIProvider] Tools set via set_tools: {len(tools)} tools")
 
 
 class AnthropicProvider(LLMProvider):
@@ -201,47 +235,74 @@ class AnthropicProvider(LLMProvider):
 
 class MiniMaxProvider(LLMProvider):
     """MiniMax Provider"""
-    
+
     def __init__(self, config: Config):
         super().__init__(config)
         try:
             from openai import OpenAI
         except ImportError:
             raise ImportError("openai package not installed. Run: pip install openai")
-        
+
         api_key = self.config.resolve_env_vars(
             self.config.get('providers.minimax.api_key', '')
         )
         base_url = self.config.resolve_env_vars(
             self.config.get('providers.minimax.base_url', 'https://api.minimax.chat/v1')
         )
-        
+
         self.client = OpenAI(
             api_key=api_key,
             base_url=base_url,
         )
         self.default_model = self.config.get('providers.minimax.model', 'MiniMax-Text-01')
-    
+        logger.info(f"[MiniMaxProvider] Initialized with base_url={base_url}, model={self.default_model}")
+
     def chat(self, messages: List[Dict], **kwargs) -> LLMResponse:
         """发送聊天请求"""
         model = kwargs.get('model', self.default_model)
+        # 去掉 provider 前缀 (e.g. "minimax/MiniMax-Text-01" -> "MiniMax-Text-01")
+        if '/' in model:
+            model = model.split('/')[1]
         temperature = kwargs.get('temperature', self.config.get('agent.temperature', 0.7))
         max_tokens = kwargs.get('max_tokens', self.config.get('agent.max_tokens', 4096))
-        
-        response = self.client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
+        tools = kwargs.get('tools')
+
+        request_kwargs = {
+            'model': model,
+            'messages': messages,
+            'temperature': temperature,
+            'max_tokens': max_tokens,
+        }
+
+        if tools:
+            logger.info(f"[MiniMaxProvider] Sending {len(tools)} tools to API")
+            request_kwargs['tools'] = tools
+
+        logger.info(f"[MiniMaxProvider] Request: model={model}, messages_count={len(messages)}")
+
+        response = self.client.chat.completions.create(**request_kwargs)
         response_dict = response.model_dump()
-        
+
+        choice = response_dict['choices'][0]
+        message = choice['message']
+        finish_reason = choice.get('finish_reason', '')
+        logger.info(f"[MiniMaxProvider] Response: finish_reason={finish_reason}")
+
+        tool_calls = None
+        if 'tool_calls' in message and message['tool_calls']:
+            tool_calls = [ToolCall.from_dict(tc) for tc in message['tool_calls']]
+            logger.info(f"[MiniMaxProvider] Detected {len(tool_calls)} tool calls")
+        else:
+            content_preview = message.get('content', '')[:200] if message.get('content') else ''
+            logger.info(f"[MiniMaxProvider] No tool calls. Content preview: {content_preview}")
+
         return LLMResponse(
-            content=response_dict['choices'][0]['message']['content'],
+            content=message.get('content', ''),
+            tool_calls=tool_calls,
             raw_response=response_dict,
             usage=response_dict.get('usage'),
         )
-    
+
     def complete(self, prompt: str, **kwargs) -> str:
         """补全请求"""
         messages = [{"role": "user", "content": prompt}]
@@ -274,6 +335,28 @@ class OllamaProvider(LLMProvider):
                     return i
             i += 1
         return -1
+
+    def _convert_messages_for_ollama(self, messages: List[Dict]) -> List[Dict]:
+        """转换消息格式以适配 Ollama：把 tool_calls 中的 JSON 字符串 arguments 转为 dict"""
+        converted = []
+        for msg in messages:
+            new_msg = dict(msg)
+            if 'tool_calls' in new_msg and new_msg['tool_calls']:
+                new_msg['tool_calls'] = []
+                for tc in msg['tool_calls']:
+                    new_tc = dict(tc)
+                    if 'function' in new_tc and isinstance(new_tc['function'], dict):
+                        func = dict(new_tc['function'])
+                        if 'arguments' in func and isinstance(func['arguments'], str):
+                            # 将 JSON 字符串转为 dict
+                            try:
+                                func['arguments'] = json.loads(func['arguments'])
+                            except json.JSONDecodeError:
+                                pass  # 保持原样
+                        new_tc['function'] = func
+                    new_msg['tool_calls'].append(new_tc)
+            converted.append(new_msg)
+        return converted
 
     def _parse_tool_calls(self, text: str) -> Optional[List[ToolCall]]:
         """从文本内容中解析工具调用"""
@@ -340,9 +423,12 @@ class OllamaProvider(LLMProvider):
             model = model.split('/')[1]
         temperature = kwargs.get('temperature', self.config.get('agent.temperature', 0.7))
 
+        # 转换消息格式：Ollama 不支持 tool_calls 中 arguments 为 JSON 字符串，需要转为 dict
+        converted_messages = self._convert_messages_for_ollama(messages)
+
         payload = {
             'model': model,
-            'messages': messages,
+            'messages': converted_messages,
             'temperature': temperature,
             'stream': False,
         }

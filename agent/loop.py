@@ -35,20 +35,21 @@ class AgentLoop:
     def __init__(self, config: Config, model: Optional[str] = None):
         """
         初始化 Agent
-        
+
         Args:
             config: 配置对象
             model: 指定模型（可选）
         """
         self.config = config
         self.model = model or config.get('agent.model', 'openai/gpt-4')
-        
+
         # 初始化 LLM
         self.llm = create_llm(config, self.model)
-        
+        logger.info(f"[AgentLoop] Initialized with model={self.model}, provider={type(self.llm).__name__}")
+
         # 初始化记忆系统
         self.memory = create_memory(config)
-        
+
         # 初始化工具系统
         self.tools = create_tools(config)
         
@@ -59,12 +60,16 @@ class AgentLoop:
             'max_tokens': config.get('agent.max_tokens', 4096),
             'timeout': config.get('agent.timeout', 60),
         }
-        
+
         # 系统提示词
         self.system_prompt = self._build_system_prompt()
-        
+
         # 消息历史
         self.message_history: List[Dict] = []
+
+        # Debug: 打印工具信息
+        tool_defs = self.tools.get_definitions()
+        logger.info(f"[AgentLoop] Registered tools: {[t.name for t in tool_defs]}")
     
     def _build_system_prompt(self) -> str:
         """构建系统提示词"""
@@ -93,49 +98,62 @@ class AgentLoop:
     def run(self, task: str, context: List[Dict] = None) -> str:
         """
         执行单个任务（同步）
-        
+
         Args:
             task: 任务描述
             context: 额外的上下文消息
-            
+
         Returns:
             Agent 的响应
         """
-        logger.info(f"Agent task: {task}")
-        
+        logger.info(f"[AgentLoop.run] Starting task: {task[:100]}...")
+
         # 1. 构建消息列表
         messages = self._build_messages(task, context)
-        
+        logger.debug(f"[AgentLoop.run] Built {len(messages)} messages")
+
         # 2. 调用 LLM
         response = self._call_llm(messages)
-        
+
         # 3. 处理工具调用循环
-        while response.tool_calls:
+        iteration = 0
+        max_iterations = self.config.get('agent.max_tool_iterations', 10)
+
+        while response.tool_calls and iteration < max_iterations:
+            iteration += 1
+            logger.info(f"[AgentLoop.run] Tool iteration {iteration}: {len(response.tool_calls)} tool calls")
+
             # 添加助手消息和工具结果到历史
             messages.append({
                 "role": "assistant",
                 "content": response.content,
                 "tool_calls": [tc.to_dict() for tc in response.tool_calls],
             })
-            
+
             # 执行工具调用
+            logger.info(f"[AgentLoop.run] Executing tools: {[tc.name for tc in response.tool_calls]}")
             tool_results = self.tools.execute(response.tool_calls)
-            
+
             # 添加工具结果到消息
             for result in tool_results:
+                logger.info(f"[AgentLoop.run] Tool result: {result.tool_call_id} - {result.result[:100]}...")
                 messages.append({
                     "role": "tool",
                     "content": result.result,
                     "tool_call_id": result.tool_call_id,
                 })
-            
+
             # 继续调用 LLM
             response = self._call_llm(messages)
-        
+
+        if iteration >= max_iterations:
+            logger.warning(f"[AgentLoop.run] Hit max tool iterations ({max_iterations})")
+
         # 4. 保存记忆
         if self.config.get('memory.enabled', True):
             self.memory.add(task, response.content)
-        
+
+        logger.info(f"[AgentLoop.run] Completed with {iteration} tool iterations")
         return response.content
     
     async def run_async(self, task: str, context: List[Dict] = None) -> str:
@@ -226,14 +244,38 @@ class AgentLoop:
     def _call_llm(self, messages: List[Dict]) -> LLMResponse:
         """调用 LLM"""
         try:
-            return self.llm.chat(
-                messages,
-                model=self.model,
-                temperature=self.agent_config['temperature'],
-                max_tokens=self.agent_config['max_tokens'],
-            )
+            # 获取工具定义
+            tool_defs = self.tools.get_definitions()
+            tools_dict = [t.to_dict() for t in tool_defs]
+
+            if tools_dict:
+                logger.debug(f"[AgentLoop._call_llm] Passing {len(tools_dict)} tool definitions to LLM")
+                # 将工具定义传给 LLM
+                response = self.llm.chat(
+                    messages,
+                    model=self.model,
+                    temperature=self.agent_config['temperature'],
+                    max_tokens=self.agent_config['max_tokens'],
+                    tools=tools_dict,
+                )
+            else:
+                logger.debug("[AgentLoop._call_llm] No tools available")
+                response = self.llm.chat(
+                    messages,
+                    model=self.model,
+                    temperature=self.agent_config['temperature'],
+                    max_tokens=self.agent_config['max_tokens'],
+                )
+
+            # Debug: 检查响应
+            if response.tool_calls:
+                logger.info(f"[AgentLoop._call_llm] Received {len(response.tool_calls)} tool calls")
+            else:
+                logger.info(f"[AgentLoop._call_llm] No tool calls in response, content length: {len(response.content) if response.content else 0}")
+
+            return response
         except Exception as e:
-            logger.error(f"LLM call failed: {e}")
+            logger.error(f"LLM call failed: {e}", exc_info=True)
             return LLMResponse(
                 content=f"Error: LLM call failed: {str(e)}",
             )

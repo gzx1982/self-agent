@@ -2,9 +2,12 @@
 Self Agent Framework - 类型定义
 """
 
+import logging
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Callable
 from enum import Enum
+
+logger = logging.getLogger(__name__)
 
 
 class MessageRole(Enum):
@@ -56,26 +59,39 @@ class ToolCall:
     id: str
     name: str
     arguments: Dict[str, Any]
-    
+
     def to_dict(self) -> Dict:
-        """转换为字典格式"""
+        """转换为字典格式（OpenAI API 格式）"""
+        import json
         return {
             "id": self.id,
             "type": "function",
             "function": {
                 "name": self.name,
-                "arguments": self.arguments,
+                # OpenAI API 要求 arguments 是 JSON 字符串，不是字典
+                "arguments": json.dumps(self.arguments),
             }
         }
-    
+
     @classmethod
     def from_dict(cls, data: Dict) -> 'ToolCall':
         """从字典创建"""
+        import json
         func = data.get("function", {})
+        arguments = func.get("arguments", {})
+
+        # 如果 arguments 是字符串（JSON），解析为字典
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except json.JSONDecodeError:
+                logger.warning(f"[ToolCall.from_dict] Failed to parse arguments: {arguments}")
+                arguments = {}
+
         return cls(
             id=data.get("id", ""),
             name=func.get("name", ""),
-            arguments=func.get("arguments", {}),
+            arguments=arguments,
         )
 
 
