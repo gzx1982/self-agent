@@ -69,6 +69,13 @@ python main.py --config config/agent.yaml --verbose
    - `MemoryEntry` - Memory records
    - `AgentConfig`, `LLMResponse` - Agent configuration and responses
 
+7. **skill.py** - `SkillManager` and `Skill` classes:
+   - Pre-defined behavior patterns with specialized system prompts
+   - Trigger types: `command` (/skill_name), `keyword`, `regex`, `file_pattern`
+   - Built-in skills: `commit`, `review`, `explain`, `test`
+   - Custom skills via `skills.custom` config section
+   - Prompt modes: `replace`, `prefix`, `suffix`
+
 ### Configuration
 
 Configuration file: `config/agent.yaml`
@@ -79,6 +86,7 @@ Key sections:
 - `tools.enabled` - List of enabled tool names
 - `tools.exec.allowed_commands` - Whitelist for exec tool
 - `memory.type` - `"file"` or `"sqlite"`
+- `skills.*` - Skill system configuration (builtin_enabled, match_threshold, custom)
 
 ### Entry Point
 
@@ -97,10 +105,25 @@ The web interface is provided by `web/app.py` (FastAPI) with a frontend at `web/
 
 ### Execution Flow
 
-1. `AgentLoop.run(task)` builds messages from system prompt + memory context + task
-2. `llm.chat()` returns `LLMResponse` with optional `tool_calls`
-3. If tool calls exist, `Tools.execute()` runs them and loops back to LLM
-4. Final response saved to memory and returned
+1. `AgentLoop.run(task)` or `AgentLoop.chat(message)` is called
+2. **Skill Detection**: `SkillManager.match()` checks triggers (command/keyword/regex/file_pattern)
+3. **Skill Application**: If matched, applies skill's system prompt and tool configuration
+4. `AgentLoop._build_messages()` builds messages from system prompt + memory context + task
+5. `llm.chat()` returns `LLMResponse` with optional `tool_calls`
+6. If tool calls exist, `Tools.execute()` runs them and loops back to LLM
+7. Final response saved to memory
+8. **Skill Reset**: Restores default system prompt and tool configuration
+9. Returns response to user
+
+### Using Skills
+
+Built-in skills are triggered by commands:
+- `/commit [message]` - Git commit helper
+- `/review [file/path]` - Code review
+- `/explain [code/question]` - Code explanation
+- `/test [file/function]` - Test generation
+
+Custom skills can be defined in `skills.custom` config with triggers.
 
 ### Important Notes
 

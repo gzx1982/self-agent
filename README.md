@@ -12,6 +12,7 @@ self-agents/
 │   ├── llm.py                 # LLM 抽象层
 │   ├── loop.py                # Agent 执行循环
 │   ├── memory.py              # 记忆系统
+│   ├── skill.py               # Skill 系统
 │   ├── tools.py               # 工具系统
 │   └── types.py               # 类型定义
 ├── providers/                  # LLM Provider 实现
@@ -367,6 +368,56 @@ async def main():
 
 asyncio.run(main())
 ```
+
+---
+
+## Skill 系统
+
+Skill 是一种预定义的 Agent 行为模式，通过特定的系统提示词和工具配置，让 Agent 在特定场景下表现得更专业。
+
+### 内置 Skills
+
+| Skill | 命令 | 描述 |
+|-------|------|------|
+| `commit` | `/commit` | Git 提交助手，生成规范的 commit message |
+| `review` | `/review` | 代码审查，检查质量和潜在问题 |
+| `explain` | `/explain` | 代码解释，用通俗语言说明代码 |
+| `test` | `/test` | 测试生成，为代码生成单元测试 |
+
+### 使用示例
+
+```bash
+$ python main.py --interactive
+
+You: /commit 帮我提交当前修改
+Agent: 我来帮你生成 commit message...
+
+You: /review agent/skill.py
+Agent: 让我审查这段代码...
+```
+
+### 自定义 Skill
+
+在 `config/agent.yaml` 中添加：
+
+```yaml
+skills:
+  builtin_enabled: true
+  match_threshold: 0.5
+
+  custom:
+    refactor:
+      description: "代码重构专家"
+      prompt: "你是一个代码重构专家..."
+      prompt_mode: "replace"
+      triggers:
+        - type: "command"
+          patterns: ["/refactor", "@refactor"]
+        - type: "keyword"
+          keywords: ["重构代码", "refactor"]
+```
+
+详见 [docs/skills.md](docs/skills.md)
 
 ---
 

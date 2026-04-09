@@ -74,6 +74,8 @@ class WebSearchTool(BaseTool):
                 return self._google_search(query, num_results)
             elif self.engine == 'bing':
                 return self._bing_search(query, num_results)
+            elif self.engine == 'tavily':
+                return self._tavily_search(query, num_results)
             else:
                 return f"Unknown search engine: {self.engine}"
         except Exception as e:
@@ -106,6 +108,75 @@ class WebSearchTool(BaseTool):
         """Bing 搜索"""
         # TODO: 实现 Bing 搜索
         return "Bing search not implemented yet."
+
+    def _tavily_search(self, query: str, num_results: int) -> str:
+        """Tavily 搜索"""
+        import json
+        import urllib.request
+
+        api_key = self.config.get('tools.web_search.api_key')
+        if not api_key:
+            return "Tavily API key not configured. Please set tools.web_search.api_key in config."
+
+        tavily_url = "https://api.tavily.com/search"
+        payload = {
+            "api_key": api_key,
+            "query": query,
+            "max_results": max(1, min(num_results, 10)),
+            "search_depth": "basic",
+            "include_answer": True,
+            "include_images": False,
+            "include_raw_content": False,
+        }
+
+        try:
+            data = json.dumps(payload).encode("utf-8")
+            req = urllib.request.Request(
+                tavily_url,
+                data=data,
+                headers={"Content-Type": "application/json", "Accept": "application/json"},
+                method="POST",
+            )
+
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                body = resp.read().decode("utf-8", errors="replace")
+
+            obj = json.loads(body)
+
+            # 构建输出
+            output_lines = []
+
+            # 添加 AI 生成的答案（如果有）
+            answer = obj.get("answer")
+            if answer:
+                output_lines.append(f"Answer: {answer.strip()}")
+                output_lines.append("")
+
+            # 添加搜索结果
+            results = obj.get("results") or []
+            if not results:
+                return "No results found."
+
+            for i, r in enumerate(results[:num_results], 1):
+                title = (r.get("title") or "").strip() or r.get("url") or "(no title)"
+                url = r.get("url") or ""
+                content = (r.get("content") or "").strip()
+
+                output_lines.append(f"{i}. {title}")
+                if url:
+                    output_lines.append(f"   {url}")
+                if content:
+                    output_lines.append(f"   {content[:200]}...")
+
+            return "\n".join(output_lines)
+
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode("utf-8", errors="replace")
+            logger.error(f"Tavily API error: {e.code} - {error_body}")
+            return f"Tavily API error: {e.code}. Please check your API key."
+        except Exception as e:
+            logger.error(f"Tavily search failed: {e}")
+            return f"Tavily search failed: {str(e)}"
 
 
 class FileReadTool(BaseTool):

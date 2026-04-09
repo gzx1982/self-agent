@@ -14,6 +14,7 @@ from .llm import create_llm, LLMProvider
 from .types import Message, MessageRole, LLMResponse, ToolCall, ToolResult
 from .memory import create_memory, Memory
 from .tools import create_tools, Tools
+from .skill import SkillManager, Skill
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +53,12 @@ class AgentLoop:
 
         # 初始化工具系统
         self.tools = create_tools(config)
-        
+        self.base_tools = self.tools.get_names()  # 保存基础工具列表
+
+        # 初始化 Skill 系统
+        self.skill_manager = SkillManager(config)
+        self.current_skill: Optional[Skill] = None
+
         # Agent 配置
         self.agent_config = {
             'name': config.get('agent.name', 'agent'),
@@ -62,7 +68,8 @@ class AgentLoop:
         }
 
         # 系统提示词
-        self.system_prompt = self._build_system_prompt()
+        self.base_system_prompt = self._build_system_prompt()
+        self.system_prompt = self.base_system_prompt
 
         # 消息历史
         self.message_history: List[Dict] = []
@@ -108,8 +115,11 @@ class AgentLoop:
         """
         logger.info(f"[AgentLoop.run] Starting task: {task[:100]}...")
 
+        # 0. 检测并应用 Skill
+        actual_task, skill = self._detect_and_apply_skill(task, context)
+
         # 1. 构建消息列表
-        messages = self._build_messages(task, context)
+        messages = self._build_messages(actual_task, context)
         logger.debug(f"[AgentLoop.run] Built {len(messages)} messages")
 
         # 2. 调用 LLM
@@ -153,24 +163,30 @@ class AgentLoop:
         if self.config.get('memory.enabled', True):
             self.memory.add(task, response.content)
 
+        # 5. 恢复 Skill 配置
+        self._reset_skill()
+
         logger.info(f"[AgentLoop.run] Completed with {iteration} tool iterations")
         return response.content
     
     async def run_async(self, task: str, context: List[Dict] = None) -> str:
         """
         执行单个任务（异步）
-        
+
         Args:
             task: 任务描述
             context: 额外的上下文消息
-            
+
         Returns:
             Agent 的响应
         """
         import asyncio
-        
+
+        # 0. 检测并应用 Skill
+        actual_task, skill = self._detect_and_apply_skill(task, context)
+
         # 1. 构建消息列表
-        messages = self._build_messages(task, context)
+        messages = self._build_messages(actual_task, context)
         
         # 2. 调用 LLM（异步）
         response = await self._call_llm_async(messages)
@@ -211,9 +227,76 @@ class AgentLoop:
         # 4. 保存记忆
         if self.config.get('memory.enabled', True):
             self.memory.add(task, response.content)
-        
+
+        # 5. 恢复 Skill 配置
+        self._reset_skill()
+
         return response.content
     
+    def _detect_and_apply_skill(self, task: str, context: List[Dict] = None) -> tuple:
+        """
+        检测并应用 Skill
+
+        Args:
+            task: 原始任务
+            context: 上下文
+
+        Returns:
+            (actual_task, skill) 元组
+        """
+        # 从上下文获取文件路径（如果有）
+        skill_context = {}
+        if context and len(context) > 0:
+            last_msg = context[-1]
+            if 'file_path' in last_msg:
+                skill_context['file_path'] = last_msg['file_path']
+
+        # 提取任务和匹配 skill
+        actual_task, skill = self.skill_manager.extract_task(task, context=skill_context)
+
+        if skill:
+            self.current_skill = skill
+            # 应用 skill 的系统提示词
+            self.system_prompt = self.skill_manager.apply_skill(
+                self.base_system_prompt, skill
+            )
+            # 应用 skill 的工具配置
+            skill_tools = self.skill_manager.get_skill_tools(skill, self.base_tools)
+            self._update_tools(skill_tools)
+            logger.info(f"[AgentLoop] Applied skill '{skill.name}'")
+        else:
+            self.current_skill = None
+            self.system_prompt = self.base_system_prompt
+
+        return actual_task, skill
+
+    def _reset_skill(self):
+        """重置 Skill 配置到默认值"""
+        if self.current_skill:
+            logger.info(f"[AgentLoop] Resetting skill '{self.current_skill.name}'")
+            self.system_prompt = self.base_system_prompt
+            self._update_tools(self.base_tools)
+            self.current_skill = None
+
+    def _update_tools(self, tool_names: List[str]):
+        """
+        更新可用工具列表
+
+        Args:
+            tool_names: 要启用的工具名称列表
+        """
+        # 重新创建工具管理器，只包含指定工具
+        all_tools = create_tools(self.config)
+        enabled_tools = {}
+
+        for name in tool_names:
+            tool = all_tools.get(name)
+            if tool:
+                enabled_tools[name] = tool
+
+        self.tools.tools = enabled_tools
+        logger.debug(f"[AgentLoop] Updated tools: {tool_names}")
+
     def _build_messages(self, task: str, context: List[Dict] = None) -> List[Dict]:
         """构建消息列表"""
         messages = []
@@ -289,19 +372,22 @@ class AgentLoop:
     def chat(self, message: str) -> str:
         """
         聊天模式（多轮对话）
-        
+
         Args:
             message: 用户消息
-            
+
         Returns:
             Agent 响应
         """
+        # 检测并应用 Skill
+        actual_message, skill = self._detect_and_apply_skill(message)
+
         # 添加用户消息到历史
         self.message_history.append({
             "role": "user",
-            "content": message,
+            "content": actual_message,
         })
-        
+
         # 构建消息
         messages = [{
             "role": "system",
@@ -342,7 +428,10 @@ class AgentLoop:
             "role": "assistant",
             "content": response.content,
         })
-        
+
+        # 重置 Skill 配置
+        self._reset_skill()
+
         return response.content
     
     def reset_history(self):

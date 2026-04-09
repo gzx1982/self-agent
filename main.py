@@ -84,8 +84,26 @@ Commands:
   exit/quit/q   - Exit interactive mode
   reset         - Clear conversation history
   history       - Show conversation history
+  skills        - List available skills
   help          - Show this help
+
+Skills (use /skill_name to trigger):
 """)
+                # 显示可用的 skills
+                for skill in agent.skill_manager.list_skills():
+                    print(f"  /{skill.name} - {skill.description}")
+                print()
+                continue
+
+            if user_input.lower() == 'skills':
+                print("\nAvailable Skills:")
+                print("-" * 40)
+                for skill in agent.skill_manager.list_skills():
+                    print(f"\n  /{skill.name}")
+                    print(f"  Description: {skill.description}")
+                    if skill.examples:
+                        print(f"  Examples: {', '.join(skill.examples[:2])}")
+                print()
                 continue
             
             response = agent.chat(user_input)

@@ -11,7 +11,7 @@ from typing import List, Dict, Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -104,7 +104,7 @@ async def status():
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     """
-    发送消息给 Agent
+    发送消息给 Agent (非流式)
 
     Args:
         request: 包含 message 字段的请求体
@@ -116,14 +116,71 @@ async def chat(request: ChatRequest):
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
     try:
+        import asyncio
         agent = get_agent()
         logger.info(f"Chat request: {request.message[:100]}...")
-        response = agent.chat(request.message)
+        # 使用 asyncio.to_thread 将同步调用转为异步，避免阻塞事件循环
+        response = await asyncio.to_thread(agent.chat, request.message)
         logger.info(f"Chat response: {response[:100]}...")
         return ChatResponse(response=response)
     except Exception as e:
         logger.error(f"Chat error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/chat/stream")
+async def chat_stream(request: ChatRequest):
+    """
+    发送消息给 Agent (流式 SSE)
+
+    Args:
+        request: 包含 message 字段的请求体
+
+    Returns:
+        SSE 流式响应
+    """
+    if not request.message.strip():
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+
+    async def event_generator():
+        import asyncio
+        agent = get_agent()
+        logger.info(f"Stream chat request: {request.message[:100]}...")
+
+        try:
+            # 在后台线程运行 agent.chat 获取完整响应
+            response = await asyncio.to_thread(agent.chat, request.message)
+            logger.info(f"Stream chat response: {response[:100]}...")
+
+            # 模拟流式输出：将响应分段发送
+            chunk_size = 4  # 每4个字符发送一次
+            for i in range(0, len(response), chunk_size):
+                chunk = response[i:i+chunk_size]
+                # SSE 格式: data: <内容>
+
+
+                # 对数据进行转义处理
+                safe_data = chunk.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r")
+                yield f"data: {safe_data}\n\n"
+                # 小延迟让流式效果更自然
+                await asyncio.sleep(0.01)
+
+            # 发送结束标记
+            yield f"event: done\ndata: [DONE]\n\n"
+
+        except Exception as e:
+            logger.error(f"Stream chat error: {e}", exc_info=True)
+            yield f"event: error\ndata: {str(e)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # 禁用 Nginx 缓冲
+        }
+    )
 
 
 @app.get("/history", response_model=HistoryResponse)

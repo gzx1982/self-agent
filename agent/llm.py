@@ -180,8 +180,12 @@ class AnthropicProvider(LLMProvider):
         api_key = self.config.resolve_env_vars(
             self.config.get('providers.anthropic.api_key', '')
         )
-        
-        self.client = Anthropic(api_key=api_key)
+
+        timeout = self.config.get('agent.timeout', 60)
+        self.client = Anthropic(
+            api_key=api_key,
+            timeout=timeout,
+        )
         self.default_model = self.config.get('providers.anthropic.model', 'claude-3-opus-20240229')
     
     def chat(self, messages: List[Dict], **kwargs) -> LLMResponse:
@@ -250,9 +254,11 @@ class MiniMaxProvider(LLMProvider):
             self.config.get('providers.minimax.base_url', 'https://api.minimax.chat/v1')
         )
 
+        timeout = self.config.get('agent.timeout', 60)
         self.client = OpenAI(
             api_key=api_key,
             base_url=base_url,
+            timeout=timeout,
         )
         self.default_model = self.config.get('providers.minimax.model', 'MiniMax-Text-01')
         logger.info(f"[MiniMaxProvider] Initialized with base_url={base_url}, model={self.default_model}")
@@ -337,10 +343,24 @@ class OllamaProvider(LLMProvider):
         return -1
 
     def _convert_messages_for_ollama(self, messages: List[Dict]) -> List[Dict]:
-        """转换消息格式以适配 Ollama：把 tool_calls 中的 JSON 字符串 arguments 转为 dict"""
+        """转换消息格式以适配 Ollama：
+        1. 把 tool_calls 中的 JSON 字符串 arguments 转为 dict
+        2. 把 tool 角色消息转为 user 角色（某些模型如 gemma4 不支持 tool 角色）
+        """
         converted = []
         for msg in messages:
             new_msg = dict(msg)
+
+            # 转换 tool 角色为 user 角色
+            if new_msg.get('role') == 'tool':
+                new_msg['role'] = 'user'
+                # 将 tool 结果格式化为用户消息
+                tool_call_id = new_msg.get('tool_call_id', '')
+                content = new_msg.get('content', '')
+                new_msg['content'] = f"[Tool Result {tool_call_id}]\n{content}"
+                # 移除 tool_call_id 字段
+                new_msg.pop('tool_call_id', None)
+
             if 'tool_calls' in new_msg and new_msg['tool_calls']:
                 new_msg['tool_calls'] = []
                 for tc in msg['tool_calls']:
